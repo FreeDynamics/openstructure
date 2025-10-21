@@ -1,0 +1,371 @@
+{
+    "model_ligands": [
+        "model_ligand-1.sdf",
+        "model_ligand-2.sdf",
+        "model_ligand-3.sdf"
+    ],
+    "reference_ligands": [
+        "C.1.",
+        "D.1.",
+        "E.1."
+    ],
+    "lddt_pli": {
+        "assigned_scores": [
+            {
+                "score": 0.791304349899292,
+                "coverage": 1.0,
+                "lddt_pli_n_contacts": 1035,
+                "model_ligand": "model_ligand-1.sdf",
+                "reference_ligand": "D.1."
+            },
+            {
+                "score": 0.0,
+                "coverage": 1.0,
+                "lddt_pli_n_contacts": 1338,
+                "model_ligand": "model_ligand-3.sdf",
+                "reference_ligand": "E.1."
+            }
+        ],
+        "model_ligand_unassigned_reason": {
+            "model_ligand-2.sdf": [
+                "no_iso",
+                "No full isomorphic match could be found - enabling substructure_match might allow a match"
+            ]
+        },
+        "reference_ligand_unassigned_reason": {
+            "C.1.": [
+                "no_iso",
+                "No full isomorphic match could be found - enabling substructure_match might allow a match"
+            ]
+        }
+    },
+    "rmsd": {
+        "assigned_scores": [
+            {
+                "score": 1.3892921209335327,
+                "coverage": 1.0,
+                "lddt_lp": 0.9220483938256153,
+                "bb_rmsd": 0.6037176251411438,
+                "model_ligand": "model_ligand-1.sdf",
+                "reference_ligand": "D.1.",
+                "chain_mapping": {
+                    "A": "B"
+                },
+                "bs_ref_res": [
+                    "A.51.",
+                    "A.54.",
+                    "A.55.",
+                    "A.57.",
+                    "A.58.",
+                    "A.59.",
+                    "A.61.",
+                    "A.91.",
+                    "A.92.",
+                    "A.95.",
+                    "A.96.",
+                    "A.99.",
+                    "A.102.",
+                    "A.112.",
+                    "A.129.",
+                    "A.132.",
+                    "A.133.",
+                    "A.136.",
+                    "A.232.",
+                    "A.233.",
+                    "A.244.",
+                    "A.247."
+                ],
+                "bs_ref_res_mapped": [
+                    "A.51.",
+                    "A.54.",
+                    "A.55.",
+                    "A.57.",
+                    "A.58.",
+                    "A.59.",
+                    "A.61.",
+                    "A.91.",
+                    "A.92.",
+                    "A.95.",
+                    "A.96.",
+                    "A.99.",
+                    "A.102.",
+                    "A.112.",
+                    "A.129.",
+                    "A.132.",
+                    "A.133.",
+                    "A.136.",
+                    "A.232.",
+                    "A.233.",
+                    "A.244.",
+                    "A.247."
+                ],
+                "bs_mdl_res_mapped": [
+                    "B.51.",
+                    "B.54.",
+                    "B.55.",
+                    "B.57.",
+                    "B.58.",
+                    "B.59.",
+                    "B.61.",
+                    "B.91.",
+                    "B.92.",
+                    "B.95.",
+                    "B.96.",
+                    "B.99.",
+                    "B.102.",
+                    "B.112.",
+                    "B.129.",
+                    "B.132.",
+                    "B.133.",
+                    "B.136.",
+                    "B.232.",
+                    "B.233.",
+                    "B.244.",
+                    "B.247."
+                ],
+                "inconsistent_residues": [],
+                "transform": [
+                    [
+                        -0.3686985373497009,
+                        0.3980128765106201,
+                        0.8400280475616455,
+                        7.079176902770996
+                    ],
+                    [
+                        -0.8913460969924927,
+                        -0.40779373049736023,
+                        -0.19800609350204468,
+                        -3.9579238891601562
+                    ],
+                    [
+                        0.26374921202659607,
+                        -0.8217602968215942,
+                        0.5051202774047852,
+                        6.306806564331055
+                    ],
+                    [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ]
+                ]
+            },
+            {
+                "score": 29.482725143432617,
+                "coverage": 1.0,
+                "lddt_lp": 0.9362713153035733,
+                "bb_rmsd": 0.3739512264728546,
+                "model_ligand": "model_ligand-3.sdf",
+                "reference_ligand": "E.1.",
+                "chain_mapping": {
+                    "B": "B"
+                },
+                "bs_ref_res": [
+                    "B.54.",
+                    "B.55.",
+                    "B.58.",
+                    "B.59.",
+                    "B.61.",
+                    "B.62.",
+                    "B.91.",
+                    "B.92.",
+                    "B.95.",
+                    "B.96.",
+                    "B.99.",
+                    "B.102.",
+                    "B.112.",
+                    "B.129.",
+                    "B.132.",
+                    "B.133.",
+                    "B.136.",
+                    "B.233.",
+                    "B.247."
+                ],
+                "bs_ref_res_mapped": [
+                    "B.54.",
+                    "B.55.",
+                    "B.58.",
+                    "B.59.",
+                    "B.61.",
+                    "B.62.",
+                    "B.91.",
+                    "B.92.",
+                    "B.95.",
+                    "B.96.",
+                    "B.99.",
+                    "B.102.",
+                    "B.112.",
+                    "B.129.",
+                    "B.132.",
+                    "B.133.",
+                    "B.136.",
+                    "B.233.",
+                    "B.247."
+                ],
+                "bs_mdl_res_mapped": [
+                    "B.54.",
+                    "B.55.",
+                    "B.58.",
+                    "B.59.",
+                    "B.61.",
+                    "B.62.",
+                    "B.91.",
+                    "B.92.",
+                    "B.95.",
+                    "B.96.",
+                    "B.99.",
+                    "B.102.",
+                    "B.112.",
+                    "B.129.",
+                    "B.132.",
+                    "B.133.",
+                    "B.136.",
+                    "B.233.",
+                    "B.247."
+                ],
+                "inconsistent_residues": [],
+                "transform": [
+                    [
+                        -0.5568894743919373,
+                        -0.6022372841835022,
+                        -0.5720000267028809,
+                        41.09874725341797
+                    ],
+                    [
+                        -0.7276356816291809,
+                        0.021647661924362183,
+                        0.6856220960617065,
+                        -26.01633644104004
+                    ],
+                    [
+                        -0.4005247950553894,
+                        0.7980234622955322,
+                        -0.4502646327018738,
+                        42.01909637451172
+                    ],
+                    [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ]
+                ]
+            }
+        ],
+        "model_ligand_unassigned_reason": {
+            "model_ligand-2.sdf": [
+                "no_iso",
+                "No full isomorphic match could be found - enabling substructure_match might allow a match"
+            ]
+        },
+        "reference_ligand_unassigned_reason": {
+            "C.1.": [
+                "no_iso",
+                "No full isomorphic match could be found - enabling substructure_match might allow a match"
+            ]
+        }
+    },
+    "chem_groups": [
+        [
+            "A",
+            "B"
+        ]
+    ],
+    "chem_mapping": [
+        [
+            "A",
+            "B"
+        ]
+    ],
+    "mdl_chains_without_chem_mapping": [],
+    "model_cleanup_log": {
+        "cleaned_residues": {
+            "no_clib": [],
+            "not_linking": []
+        },
+        "cleaned_atoms": {
+            "unknown_atoms": []
+        }
+    },
+    "reference_cleanup_log": {
+        "cleaned_residues": {
+            "no_clib": [],
+            "not_linking": []
+        },
+        "cleaned_atoms": {
+            "unknown_atoms": []
+        }
+    },
+    "arguments": {
+        "model": "model.pdb",
+        "model_ligands": [
+            "model_ligand-1.sdf",
+            "model_ligand-2.sdf",
+            "model_ligand-3.sdf"
+        ],
+        "reference": "reference.cif.gz",
+        "reference_ligands": null,
+        "output": "compare-ligand-structures_example_out.json",
+        "model_format": null,
+        "reference_format": null,
+        "output_format": "json",
+        "output_by_model_ligand": false,
+        "csv_extra_header": null,
+        "csv_extra_data": null,
+        "model_biounit": null,
+        "reference_biounit": null,
+        "fault_tolerant": false,
+        "residue_number_alignment": true,
+        "substructure_match": false,
+        "coverage_delta": 0.2,
+        "verbosity": 2,
+        "full_results": false,
+        "lddt_pli": true,
+        "lddt_pli_radius": 6.0,
+        "lddt_pli_add_mdl_contacts": true,
+        "rmsd": true,
+        "radius": 4.0,
+        "lddt_lp_radius": 15.0,
+        "full_bs_search": false,
+        "max_symmetries": 10000.0,
+        "min_pep_length": 6,
+        "min_nuc_length": 4,
+        "chem_group_seqid_thresh": 95.0,
+        "chem_map_seqid_thresh": 70.0,
+        "seqres": null,
+        "trg_seqres_mapping": null
+    },
+    "log": [
+        {
+            "message": "Loading data",
+            "level": "Script"
+        },
+        {
+            "message": "Computing LDDT-PLI scores",
+            "level": "Script"
+        },
+        {
+            "message": "Computing pairwise scores for all 3 x 3 ligands",
+            "level": "Script"
+        },
+        {
+            "message": "Computing ligand assignment",
+            "level": "Script"
+        },
+        {
+            "message": "Computing BiSyRMSD scores",
+            "level": "Script"
+        },
+        {
+            "message": "Computing pairwise scores for all 3 x 3 ligands",
+            "level": "Script"
+        },
+        {
+            "message": "Computing ligand assignment",
+            "level": "Script"
+        }
+    ],
+    "ost_version": "2.11.0",
+    "status": "SUCCESS"
+}

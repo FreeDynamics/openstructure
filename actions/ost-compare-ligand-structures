@@ -1,0 +1,1081 @@
+"""
+Evaluate model with non-polymer/small molecule ligands against reference.
+
+Example: ost compare-ligand-structures \\
+    -m model.pdb \\
+    -ml ligand.sdf \\
+    -r reference.cif \\
+    --lddt-pli --rmsd
+
+Structures of polymer entities (proteins and nucleotides) can be given in 
+legacy PDB or mmCIF format. In case of PDB format, the full loaded structure
+undergoes processing described below. In case of mmCIF format, chains
+representing "polymer" entities according to _entity.type are selected and
+further processed as described below.
+
+Structure cleanup of polymer chains is heavily based on the compound library
+and performs: 1) removal of hydrogens, 2) removal of residues for which there
+is no entry in compound library, 3) removal of residues that are not peptide
+linking or nucleotide linking according to the compound library 4) removal of
+atoms that are not defined for respective residues in the compound library.
+Except step 1), every cleanup is logged and a report is available in the json
+outfile.
+
+Only polymers (protein and nucleic acids) of model and reference are considered
+for ligand binding sites. The mapping of possible reference/model chain
+assignments requires a preprocessing. In short: identical chains in the
+reference are grouped based on pairwise sequence identity (see
+--chem-group-seqid-thresh). Each model chain is assigned to one of these
+groups (see --chem-map-seqid-thresh param). To avoid spurious matches, only
+polymers of a certain length are considered in this matching procedure (see
+--min_pep_length/--min_nuc_length param). Shorter polymers are never mapped
+and do not contribute to scoring.
+
+Ligands can be given as path to SDF files containing the ligand for both model
+(--model-ligands/-ml) and reference (--reference-ligands/-rl). If omitted,
+ligands are optionally detected from a structure file if it is given in mmCIF
+format (based on "non-polymer" _entity.type annotation). If you provide
+structures in PDB format, an error is raised if ligands are not explicitly
+given in SDF format.
+
+Ligands undergo gentle processing where hydrogens are removed. Connectivity
+is relevant for scoring. It is read directly from SDF input. If ligands are
+extracted from mmCIF, connectivity is derived from the compound library. 
+Ligands that are not present in the compound library are only supported in
+fault-tolerant mode, where a distance based heuristic is used to connect the
+ligand atoms. Be aware that this is unreliable and might cause issues with
+ligand matching
+
+Output can be written in two format: JSON (default) or CSV, controlled by the
+--output-format/-of argument.
+
+Without additional options, the JSON ouput is a dictionary with the following
+keys:
+
+ * "model_ligands": A list of ligands in the model. If ligands were provided
+   explicitly with --model-ligands, elements of the list will be the paths to
+   the ligand SDF file(s). Otherwise, they will be the chain name, residue
+   number and insertion code of the ligand, separated by a dot.
+ * "reference_ligands": Same for reference ligands.
+ * "chem_groups": Groups of polypeptides/polynucleotides from reference that
+   are considered chemically equivalent. Predefined if the reference is an mmCIF
+   file or if "seqres"/"trg-seqres-mapping" are provided manually. Alignments
+   of structure to SEQRES are established using residue numbers in these cases
+   and matching structure one letter codes and SEQRES are enforced.
+   In case of a PDB reference without predefined SEQRES, groups are established
+   using clustering based on pairwise alignments. Chains within
+   "chem_group_seqid_thresh" are considered equivalent and alignments are
+   established using residue numbers or Needleman-Wunsch
+   (see "residue-number-alignments" flag)
+   You can derive stoichiometry from this. Contains only chains that are
+   considered in chain mapping, i.e. pass a size threshold (defaults: 6 for
+   peptides, 4 for nucleotides).
+ * "chem_mapping": List of same length as "chem_groups". Assigns model chains to
+   the respective chem group. Again, only contains chains that are considered
+   in chain mapping. That is 1) pass the same size threshold as for chem_groups
+   2) can be aligned to any of the chem groups with a sequence identity
+   threshold that can be controlled by --chem-map-seqid-thresh.
+ * "mdl_chains_without_chem_mapping": Model chains that could be considered in
+   chain mapping, i.e. are long enough, but could not be mapped to any chem
+   group. Depends on --chem-map-seqid-thresh. A mapping for each model chain can
+   be enforced by setting it to 0.
+ * "model_cleanup_log": Lists residues/atoms that have been removed in model
+   cleanup process.
+ * "reference_cleanup_log": Same for reference.
+ * "arguments": Dictionary of input arguments.
+ * "log": List of log messages (same as those printed to stderr) as a 
+   dictionary with keys "message" and "level".
+ * "ost_version": The OpenStructure version used for computation.
+ * "status": SUCCESS if everything ran through. In case of failure, the only
+   content of the JSON output will be \"status\" set to FAILURE and an
+   additional key: "traceback".
+
+Additional keys represent input options.
+
+Each score is opt-in and the respective results are available in three keys:
+
+ * "assigned_scores": A list with data for each pair of assigned ligands.
+   Data is yet another dict containing score specific information for that
+   ligand pair. The following keys are there in any case:
+
+    * "model_ligand": The model ligand
+    * "reference_ligand": The target ligand to which model ligand is assigned to
+    * "score": The score
+    * "coverage": Fraction of model ligand atoms which are covered by target
+      ligand. Will only deviate from 1.0 if --substructure-match is enabled.
+
+ * "model_ligand_unassigned_reason": Dictionary with unassigned model ligands
+   as key and an educated guess why this happened.
+
+ * "reference_ligand_unassigned_reason": Dictionary with unassigned target ligands
+   as key and an educated guess why this happened.
+
+If --full-results is enabled, another element with key "full_results" is added.
+This is a list of data items for each pair of model/reference ligands. The data
+items follow the same structure as in "assigned_scores". If no score for a
+specific pair of ligands could be computed, "score" and "coverage" are set to
+null and a key "reason" is added giving an educated guess why this happened.
+
+CSV output is a table of comma-separated values, with one line for each
+reference ligand (or one model ligand if the --by-model-ligand-output flag was
+set).
+
+The following column is always available:
+
+ * reference_ligand/model_ligand: If reference ligands were provided explicitly
+   with --reference-ligands, elements of the list will be the paths to the
+   ligand SDF file(s). Otherwise, they will be the chain name, residue number
+   and insertion code of the ligand, separated by a dot. If the
+   --by-model-ligand-output flag was set, this will be model ligand instead,
+   following the same rules.
+
+If LDDT-PLI was enabled with --lddt-pli, the following columns are added:
+
+ * "lddt_pli", "lddt_pli_coverage" and "lddt_pli_(model|reference)_ligand"
+   are the LDDT-PLI score result, the corresponding coverage and assigned model
+   ligand (or reference ligand if the --by-model-ligand-output flag was set)
+   if an assignment was found, respectively, empty otherwise.
+ * "lddt_pli_unassigned" is empty if an assignment was found, otherwise it
+   lists the short reason this reference ligand was unassigned.
+
+If BiSyRMSD was enabled with --rmsd, the following columns are added:
+
+ * "rmsd", "rmsd_coverage". "lddt_lp" "bb_rmsd" and
+   "rmsd_(model|reference)_ligand" are the BiSyRMSD, the corresponding
+   coverage, LDDT-LP, backbone RMSD and assigned model ligand (or reference
+   ligand if the --by-model-ligand-output flag was set) if an assignment
+   was found, respectively, empty otherwise.
+ * "rmsd_unassigned" is empty if an assignment was found, otherwise it
+   lists the short reason this reference ligand was unassigned.
+
+"""
+
+import argparse
+import csv
+from io import StringIO
+import json
+import os
+import sys
+import traceback
+
+import ost
+from ost import io
+from ost.mol.alg import scoring_base
+from ost.mol.alg import ligand_scoring_base
+from ost.mol.alg import ligand_scoring_lddtpli
+from ost.mol.alg import ligand_scoring_scrmsd
+
+def _ParseArgs():
+    parser = argparse.ArgumentParser(description = __doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     prog="ost compare-ligand-structures")
+
+    parser.add_argument(
+        "-m",
+        "--mdl",
+        "--model",
+        dest="model",
+        required=True,
+        help=("Path to model file."))
+
+    parser.add_argument(
+        "-ml",
+        "--mdl-ligands",
+        "--model-ligands",
+        dest="model_ligands",
+        nargs="*",
+        default=None,
+        help=("Path to model ligand files."))
+
+    parser.add_argument(
+        "-r",
+        "--ref",
+        "--reference",
+        dest="reference",
+        required=True,
+        help=("Path to reference file."))
+
+    parser.add_argument(
+        "-rl",
+        "--ref-ligands",
+        "--reference-ligands",
+        dest="reference_ligands",
+        nargs="*",
+        default=None,
+        help=("Path to reference ligand files."))
+
+    parser.add_argument(
+        "-o",
+        "--out",
+        "--output",
+        dest="output",
+        default=None,
+        help=("Output file name. "
+              "Default depends on format: out.json or out.csv"))
+
+    parser.add_argument(
+        "-mf",
+        "--mdl-format",
+        "--model-format",
+        dest="model_format",
+        required=False,
+        default=None,
+        choices=["pdb", "cif", "mmcif"],
+        help=("Format of model file. pdb reads pdb but also pdb.gz, same "
+              "applies to cif/mmcif. Inferred from filepath if not given."))
+
+    parser.add_argument(
+        "-rf",
+        "--reference-format",
+        "--ref-format",
+        dest="reference_format",
+        required=False,
+        default=None,
+        choices=["pdb", "cif", "mmcif"],
+        help=("Format of reference file. pdb reads pdb but also pdb.gz, same "
+              "applies to cif/mmcif. Inferred from filepath if not given."))
+
+    parser.add_argument(
+        "-of",
+        "--out-format",
+        "--output-format",
+        dest="output_format",
+        choices=["json", "csv"],
+        default="json",
+        help=("Output format, JSON or CSV, in lowercase. "
+              "default: json"))
+
+    parser.add_argument(
+        "-csvm",
+        "--by-model-ligand",
+        "--by-model-ligand-output",
+        dest="output_by_model_ligand",
+        default=False,
+        action="store_true",
+        help=("For CSV output, this flag changes the output so that each line "
+              "reports one model ligand, instead of a reference ligand. "
+              "Has no effect with JSON output."))
+
+    parser.add_argument(
+        "--csv-extra-header",
+        dest="csv_extra_header",
+        default=None,
+        type=str,
+        help=("Extra header prefix for CSV output. This allows adding "
+              "additional annotations (such as target ID, group, etc) to the "
+              "output"))
+
+    parser.add_argument(
+        "--csv-extra-data",
+        dest="csv_extra_data",
+        default=None,
+        type=str,
+        help=("Additional data (columns) for CSV output."))
+
+    parser.add_argument(
+        "-mb",
+        "--model-biounit",
+        dest="model_biounit",
+        required=False,
+        default=None,
+        type=str,
+        help=("Only has an effect if model is in mmcif format. By default, "
+              "the asymmetric unit (AU) is used for scoring. If there are "
+              "biounits defined in the mmcif file, you can specify the "
+              "ID (as a string) of the one which should be used."))
+
+    parser.add_argument(
+        "-rb",
+        "--reference-biounit",
+        dest="reference_biounit",
+        required=False,
+        default=None,
+        type=str,
+        help=("Only has an effect if reference is in mmcif format. By default, "
+              "the asymmetric unit (AU) is used for scoring. If there are "
+              "biounits defined in the mmcif file, you can specify the "
+              "ID (as a string) of the one which should be used."))
+
+    parser.add_argument(
+        "-ft",
+        "--fault-tolerant",
+        dest="fault_tolerant",
+        default=False,
+        action="store_true",
+        help=("Fault tolerant parsing."))
+
+    parser.add_argument(
+        "-rna",
+        "--residue-number-alignment",
+        dest="residue_number_alignment",
+        default=False,
+        action="store_true",
+        help=("Make alignment based on residue number instead of using "
+              "a global BLOSUM62-based alignment (NUC44 for nucleotides)."))
+
+    parser.add_argument(
+        "-sm",
+        "--substructure-match",
+        dest="substructure_match",
+        default=False,
+        action="store_true",
+        help=("Allow incomplete (ie partially resolved) target ligands."))
+
+    parser.add_argument(
+        "-cd",
+        "--coverage-delta",
+        dest="coverage_delta",
+        default=0.2,
+        type=float,
+        help=("Coverage delta for partial ligand assignment."))
+
+    parser.add_argument(
+        '-v',
+        '--verbosity',
+        dest="verbosity",
+        type=int,
+        default=2,
+        help="Set verbosity level. Defaults to 2 (Script).")
+
+    parser.add_argument(
+        "--full-results",
+        dest="full_results",
+        default=False,
+        action="store_true",
+        help=("Outputs scoring results for all model/reference ligand pairs "
+              "and store as key \"full_results\""))
+
+    # arguments relevant for lddt-pli
+
+    parser.add_argument(
+        "--lddt-pli",
+        dest="lddt_pli",
+        default=False,
+        action="store_true",
+        help=("Compute LDDT-PLI scores and store as key \"lddt_pli\"."))
+
+    parser.add_argument(
+        "--lddt-pli-radius",
+        dest="lddt_pli_radius",
+        default=6.0,
+        type=float,
+        help=("LDDT inclusion radius for LDDT-PLI."))
+
+    parser.add_argument(
+        "--lddt-pli-add-mdl-contacts",
+        dest="lddt_pli_add_mdl_contacts",
+        default=True,
+        action="store_true",
+        help=("Add model contacts when computing LDDT-PLI. "
+              "This is enabled by default."))
+
+    parser.add_argument(
+        "--no-lddt-pli-add-mdl-contacts",
+        dest="lddt_pli_add_mdl_contacts",
+        default=True,
+        action="store_false",
+        help=("DO NOT add model contacts when computing LDDT-PLI."))
+
+    # arguments relevant for rmsd
+
+    parser.add_argument(
+        "--rmsd",
+        dest="rmsd",
+        default=False,
+        action="store_true",
+        help=("Compute RMSD scores and store as key \"rmsd\"."))
+
+    parser.add_argument(
+        "--radius",
+        dest="radius",
+        default=4.0,
+        type=float,
+        help=("Inclusion radius to extract reference binding site that is used "
+              "for RMSD computation. Any residue with atoms within this "
+              "distance of the ligand will be included in the binding site."))
+
+    parser.add_argument(
+        "--lddt-lp-radius",
+        dest="lddt_lp_radius",
+        default=15.0,
+        type=float,
+        help=("LDDT inclusion radius for LDDT-LP."))
+
+    parser.add_argument(
+        "-fbs",
+        "--full-bs-search",
+        dest="full_bs_search",
+        default=False,
+        action="store_true",
+        help=("Enumerate all potential binding sites in the model when "
+              "searching rigid superposition for RMSD computation"))
+
+    parser.add_argument(
+        "-ms",
+        "--max-symmetries",
+        dest="max_symmetries",
+        default=1e4,
+        type=int,
+        help=("If more than that many isomorphisms exist for a target-ligand "
+              "pair, it will be ignored and reported as unassigned."))
+
+    parser.add_argument(
+        "--min-pep-length",
+        dest="min_pep_length",
+        default = 6,
+        type=int,
+        help=("Default: 6 - "
+              "Minimum length of a protein chain to be considered for being "
+              "part of a binding site.")
+    )
+
+    parser.add_argument(
+        "--min-nuc-length",
+        dest="min_nuc_length",
+        default = 4,
+        type=int,
+        help=("Default: 4 - "
+              "Minimum length of a NA chain to be considered for being "
+              "part of a binding site.")
+    )
+
+    parser.add_argument(
+        "--chem-group-seqid-thresh",
+        dest="chem_group_seqid_thresh",
+        type = float,
+        default = 95.,
+        help=("Default: 95 - Sequence identity threshold used to group "
+              "identical chains in reference structure in the chain mapping "
+              "step. The same threshold is applied to peptide and nucleotide "
+              "chains.")
+    )
+
+    parser.add_argument(
+        "--chem-map-seqid-thresh",
+        dest="chem_map_seqid_thresh",
+        type = float,
+        default = 70.,
+        help=("Default: 70 - Sequence identity threshold used to map model "
+              "chains to groups derived in the chem grouping step in chain "
+              "mapping. If set to 0., a mapping is enforced and each model "
+              "chain is assigned to the chem group with maximum sequence "
+              "identity. If larger than 0., a mapping only happens if the "
+              "respective model chain can be aligned to a chem group with the "
+              "specified sequence identity threshold AND if at least "
+              "min-pep-length/min-nuc-length residues are aligned. The same "
+              "threshold is applied to peptide and nucleotide chains.")
+    )
+
+    parser.add_argument(
+        "--seqres",
+        dest="seqres",
+        type = str,
+        default = None,
+        help=("Default: None - manually define chem groups by specifying path "
+              "to a fasta file. Each sequence in that file is considered a "
+              "reference sequence of a chem group. All polymer chains "
+              "in reference will be aligned to these sequences. This only works "
+              "if -rna/--residue-number-alignment is enabled and an error is raised "
+              "otherwise. "
+              "Additionally, you need to manually specify a mapping "
+              "of the polymer chains using trg-seqres-mapping and an error "
+              "is raised otherwise. The one letter codes in the structure must "
+              "exactly match the respective characters in seqres and an error "
+              "is raised if not.")
+    )
+
+    parser.add_argument(
+        "--trg-seqres-mapping",
+        nargs="+",
+        dest="trg_seqres_mapping",
+        default=None,
+        help=("Default: None - Maps each polymer chain in reference to a "
+              "sequence in *seqres*. Each mapping is a key:value pair "
+              "where key is the chain name in reference and value is the "
+              "sequence name in seqres. So let's say you have a homo-dimer "
+              "reference with chains \"A\" and \"B\"for which you provide a "
+              "seqres file containing one sequence with name \"1\". You can "
+              "specify this mapping with: --trg-seqres-mapping A:1 B:1")
+    )
+
+    args = parser.parse_args()
+    if args.output is None:
+        args.output = "out.%s" % args.output_format
+
+    return args
+
+
+class _LogSink(ost.LogSink):
+    def __init__(self):
+        super().__init__()
+        self.messages = []
+        self._log_levels_map = {v: k for k, v in ost.LogLevel.names.items()}
+        
+    def LogMessage(self, message, severity):
+        clean_message = message.rstrip('\n')
+        self.messages.append({
+            "message": clean_message,
+            "level": self._log_levels_map[severity]
+        })
+        print(clean_message, file=sys.stderr)
+
+
+def _CheckCompoundLib():
+    clib = ost.conop.GetDefaultLib()
+    if not clib:
+        ost.LogError("A compound library is required for this action. "
+                     "Please refer to the OpenStructure website: "
+                     "https://openstructure.org/docs/conop/compoundlib/.")
+        raise RuntimeError("No compound library found")
+
+
+def _GetStructureFormat(structure_path, sformat=None):
+    """Get the structure format and return it as "pdb" or "mmcif".
+    """
+
+    if sformat is None:
+        # Determine file format from suffix.
+        ext = structure_path.split(".")
+        if ext[-1] == "gz":
+            ext = ext[:-1]
+        if len(ext) <= 1:
+            raise Exception(f"Could not determine format of file "
+                            f"{structure_path}.")
+        sformat = ext[-1].lower()
+    if sformat in ["mmcif", "cif"]:
+        return "mmcif"
+    elif sformat == "pdb":
+        return sformat
+    else:
+        raise Exception(f"Unknown/unsupported file format found for "
+                        f"file {structure_path}.")
+
+
+def _LoadLigands(ligands):
+    """
+    Load a list of ligands from file names. Return a list of entities oif the
+    same size.
+    """
+    if ligands is None:
+        return None
+    else:
+        return [_LoadLigand(lig) for lig in ligands]
+
+
+def _LoadLigand(file):
+    """
+    Load a single ligand from file names. Return an entity.
+    Removes hydrogens.
+    """
+    ent = ost.io.LoadEntity(file, format="sdf")
+    ent = ost.mol.CreateEntityFromView(ent.Select(
+        "ele != H and ele != D"), include_exlusive_atoms=False)
+    ed = ent.EditXCS()
+    ed.RenameChain(ent.chains[0], file)
+    ed.UpdateICS()
+    return ent
+
+
+def _QualifiedResidueNotation(r):
+    """Return a parsable string of the residue in the format:
+    ChainName.ResidueNumber.InsertionCode."""
+    resnum = r.number
+    return "{cname}.{rnum}.{ins_code}".format(
+        cname=r.chain.name,
+        rnum=resnum.num,
+        ins_code=resnum.ins_code.strip("\u0000"),
+    )
+
+
+def _LoadStructureData(receptor_path,
+                       ligand_path,
+                       sformat = None,
+                       bu_id = None,
+                       fault_tolerant = False):
+
+    # thats the return variables
+    # the last two are only set in case of an mmCIF file
+    receptor = None
+    ligands = None
+    seqres = None
+    trg_seqres_mapping = None
+
+    receptor_format = _GetStructureFormat(receptor_path, sformat = sformat)
+
+    if receptor_format == "pdb":
+        if ligand_path is None:
+            raise RuntimeError(f"Must provide ligand as SDF file(s) when "
+                               f"receptor ({receptor_path}) is given in PDB "
+                               f"format.")
+        if bu_id is not None:
+            raise RuntimeError(f"Cannot specify biounit ({bu_id}) for receptor "
+                               f"in PDB format ({receptor_path})")
+        receptor = scoring_base.PDBPrep(receptor_path,
+                                        fault_tolerant=fault_tolerant)
+        ligands = _LoadLigands(ligand_path)
+
+    elif receptor_format == "mmcif":
+        if ligand_path is None:
+            receptor, ligands, seqres, trg_seqres_mapping = \
+            scoring_base.MMCIFPrep(receptor_path,
+                                   biounit = bu_id,
+                                   extract_nonpoly = True,
+                                   fault_tolerant = fault_tolerant,
+                                   extract_seqres_mapping=True)
+        else:
+            receptor, seqres, trg_seqres_mapping = \
+            scoring_base.MMCIFPrep(receptor_path,
+                                   biounit = bu_id,
+                                   extract_nonpoly = False,
+                                   fault_tolerant = fault_tolerant,
+                                   extract_seqres_mapping=True)
+            ligands = _LoadLigands(ligand_path)
+    else:
+        raise RuntimeError("This should never happen")
+
+    # assign filename as name to receptor
+    receptor.SetName(receptor_path)
+
+    return (receptor, ligands, seqres, trg_seqres_mapping)
+
+def _SetupLDDTPLIScorer(model, model_ligands, reference, reference_ligands, args,
+                        seqres=None, trg_seqres_mapping=None):
+    return ligand_scoring_lddtpli.LDDTPLIScorer(model, reference,
+                                                model_ligands = model_ligands,
+                                                target_ligands = reference_ligands,
+                                                resnum_alignments = args.residue_number_alignment,
+                                                rename_ligand_chain = True,
+                                                substructure_match = args.substructure_match,
+                                                coverage_delta = args.coverage_delta,
+                                                lddt_pli_radius = args.lddt_pli_radius,
+                                                add_mdl_contacts = args.lddt_pli_add_mdl_contacts,
+                                                max_symmetries = args.max_symmetries,
+                                                min_pep_length = args.min_pep_length,
+                                                min_nuc_length = args.min_nuc_length,
+                                                pep_seqid_thr = args.chem_group_seqid_thresh,
+                                                nuc_seqid_thr = args.chem_group_seqid_thresh,
+                                                mdl_map_pep_seqid_thr = args.chem_map_seqid_thresh,
+                                                mdl_map_nuc_seqid_thr = args.chem_map_seqid_thresh,
+                                                seqres=seqres,
+                                                trg_seqres_mapping=trg_seqres_mapping)
+
+def _SetupSCRMSDScorer(model, model_ligands, reference, reference_ligands, args,
+                       seqres=None, trg_seqres_mapping=None):
+    return ligand_scoring_scrmsd.SCRMSDScorer(model, reference,
+                                              model_ligands = model_ligands,
+                                              target_ligands = reference_ligands,
+                                              resnum_alignments = args.residue_number_alignment,
+                                              rename_ligand_chain = True,
+                                              substructure_match = args.substructure_match,
+                                              coverage_delta = args.coverage_delta,
+                                              bs_radius = args.radius,
+                                              lddt_lp_radius = args.lddt_lp_radius,
+                                              full_bs_search = args.full_bs_search,
+                                              max_symmetries = args.max_symmetries,
+                                              min_pep_length = args.min_pep_length,
+                                              min_nuc_length = args.min_nuc_length,
+                                              pep_seqid_thr = args.chem_group_seqid_thresh,
+                                              nuc_seqid_thr = args.chem_group_seqid_thresh,
+                                              mdl_map_pep_seqid_thr = args.chem_map_seqid_thresh,
+                                              mdl_map_nuc_seqid_thr = args.chem_map_seqid_thresh,
+                                              seqres=seqres,
+                                              trg_seqres_mapping=trg_seqres_mapping)
+
+def _Process(model, model_ligands, reference, reference_ligands, args,
+             seqres = None, trg_seqres_mapping = None):
+
+    # see if seqres/trg-seqres-mapping are set in args
+    # if yes, they're prioritized even if we have these values from
+    # the mmCIF file
+    if args.seqres is not None:
+        if args.trg_seqres_mapping is None:
+            raise RuntimeError("Must provide trg-seqres-mapping if seqres "
+                               "is provided.")
+
+    if args.trg_seqres_mapping is not None:
+        if args.seqres is None:
+            raise RuntimeError("Must provide seqres if trg-seqres-mapping "
+                               "is provided.")
+
+    if args.seqres is not None and args.trg_seqres_mapping is not None:
+        seqres = io.LoadSequenceList(args.seqres)
+        trg_seqres_mapping = {x.split(':')[0]: x.split(':')[1] for x in args.chain_mapping}
+
+
+    out = dict()
+
+    ##########################
+    # Setup required scorers #
+    ##########################
+
+    lddtpli_scorer = None
+    scrmsd_scorer = None
+
+    if args.lddt_pli:
+        lddtpli_scorer = _SetupLDDTPLIScorer(model, model_ligands,
+                                             reference, reference_ligands,
+                                             args, seqres=seqres,
+                                             trg_seqres_mapping=trg_seqres_mapping)
+
+    if args.rmsd:
+        scrmsd_scorer = _SetupSCRMSDScorer(model, model_ligands,
+                                           reference, reference_ligands,
+                                           args, seqres=seqres,
+                                           trg_seqres_mapping=trg_seqres_mapping)
+
+    # basic info on ligands only requires baseclass functionality
+    # doesn't matter which scorer we use
+    scorer = None
+    if lddtpli_scorer is not None:
+        scorer = lddtpli_scorer
+    elif scrmsd_scorer is not None:
+        scorer = scrmsd_scorer
+    else:
+        ost.LogWarning("No score selected, output will be empty.")
+        # just create SCRMSD scorer to fill basic ligand info
+        scorer = _SetupSCRMSDScorer(model, model_ligands,
+                                    reference, reference_ligands,
+                                    args, seqres=seqres,
+                                    trg_seqres_mapping=trg_seqres_mapping)
+
+    ####################################
+    # Extract / Map ligand information #
+    ####################################
+
+    if args.model_ligands is not None:
+        # Replace model ligand by path
+        if len(model_ligands) == len(scorer.model_ligands):
+            # Map ligand => path
+            out["model_ligands"] = args.model_ligands
+        elif len(model_ligands) < len(scorer.model_ligands):
+            # Multi-ligand SDF files were given
+            # Map ligand => path:idx
+            out["model_ligands"] = list()
+            for ligand, filename in zip(model_ligands, args.model_ligands):
+                assert isinstance(ligand, ost.mol.EntityHandle)
+                for i, residue in enumerate(ligand.residues):
+                    out["model_ligands"].append(f"{filename}:{i}")
+        else:
+            # This should never happen and would be a bug
+            raise RuntimeError("Fewer ligands in the model scorer "
+                               "(%d) than given (%d)" % (
+                len(scorer.model_ligands), len(model_ligands)))
+    else:
+        # Map ligand => qualified residue
+        out["model_ligands"] = [_QualifiedResidueNotation(l) for l in scorer.model_ligands]
+
+    if args.reference_ligands is not None:
+        # Replace reference ligand by path
+        if len(reference_ligands) == len(scorer.target_ligands):
+            # Map ligand => path
+            out["reference_ligands"] = args.reference_ligands
+        elif len(reference_ligands) < len(scorer.target_ligands):
+            # Multi-ligand SDF files were given
+            # Map ligand => path:idx
+            out["reference_ligands"] = list()
+            for ligand, filename in zip(reference_ligands, args.reference_ligands):
+                assert isinstance(ligand, ost.mol.EntityHandle)
+                for i, residue in enumerate(ligand.residues):
+                    out["reference_ligands"].append(f"{filename}:{i}")
+        else:
+            # This should never happen and would be a bug
+            raise RuntimeError("Fewer ligands in the reference scorer "
+                               "(%d) than given (%d)" % (
+                len(scorer.target_ligands), len(reference_ligands)))
+    else:
+        # Map ligand => qualified residue
+        out["reference_ligands"] = [_QualifiedResidueNotation(l) for l in scorer.target_ligands]
+
+
+    ##################
+    # Compute scores #
+    ##################
+
+    if args.lddt_pli:
+        LogScript("Computing LDDT-PLI scores")
+        out["lddt_pli"] = dict()
+        out["lddt_pli"]["assigned_scores"] = list()
+        for lig_pair in lddtpli_scorer.assignment:
+            score = float(lddtpli_scorer.score_matrix[lig_pair[0], lig_pair[1]])
+            coverage = float(lddtpli_scorer.coverage_matrix[lig_pair[0], lig_pair[1]])
+            aux_data = lddtpli_scorer.aux_matrix[lig_pair[0], lig_pair[1]]
+            target_key = out["reference_ligands"][lig_pair[0]]
+            model_key = out["model_ligands"][lig_pair[1]]
+            out["lddt_pli"]["assigned_scores"].append({"score": score,
+                                                       "coverage": coverage,
+                                                       "lddt_pli_n_contacts": aux_data["lddt_pli_n_contacts"],
+                                                       "model_ligand": model_key,
+                                                       "reference_ligand": target_key})
+
+        out["lddt_pli"]["model_ligand_unassigned_reason"] = dict()
+        for i in lddtpli_scorer.unassigned_model_ligands:
+            key = out["model_ligands"][i]
+            reason = lddtpli_scorer.guess_model_ligand_unassigned_reason(i)
+            out["lddt_pli"]["model_ligand_unassigned_reason"][key] = reason
+
+        out["lddt_pli"]["reference_ligand_unassigned_reason"] = dict()
+        for i in lddtpli_scorer.unassigned_target_ligands:
+            key = out["reference_ligands"][i]
+            reason = lddtpli_scorer.guess_target_ligand_unassigned_reason(i)
+            out["lddt_pli"]["reference_ligand_unassigned_reason"][key] = reason
+
+        if args.full_results:
+            out["lddt_pli"]["full_results"] = list()
+            shape = lddtpli_scorer.score_matrix.shape
+            for ref_lig_idx in range(shape[0]):
+                for mdl_lig_idx in range(shape[1]):
+                    state = int(lddtpli_scorer.state_matrix[(ref_lig_idx, mdl_lig_idx)])
+                    target_key = out["reference_ligands"][ref_lig_idx]
+                    model_key = out["model_ligands"][mdl_lig_idx]
+                    if state == 0:                    
+                        score = float(lddtpli_scorer.score_matrix[(ref_lig_idx, mdl_lig_idx)])
+                        coverage = float(lddtpli_scorer.coverage_matrix[(ref_lig_idx, mdl_lig_idx)])
+                        aux_data = lddtpli_scorer.aux_matrix[(ref_lig_idx, mdl_lig_idx)]
+                        out["lddt_pli"]["full_results"].append({"score": score,
+                                                                "coverage": coverage,
+                                                                "lddt_pli_n_contacts": aux_data["lddt_pli_n_contacts"],
+                                                                "model_ligand": model_key,
+                                                                "reference_ligand": target_key})
+
+                    else:
+                        reason = lddtpli_scorer.state_decoding[state]
+                        out["lddt_pli"]["full_results"].append({"score": None,
+                                                                "coverage": None,
+                                                                "model_ligand": model_key,
+                                                                "reference_ligand": target_key,
+                                                                "reason": reason})
+
+
+    if args.rmsd:
+        LogScript("Computing BiSyRMSD scores")
+        out["rmsd"] = dict()
+        out["rmsd"]["assigned_scores"] = list()
+        for lig_pair in scrmsd_scorer.assignment:
+            score = float(scrmsd_scorer.score_matrix[lig_pair[0], lig_pair[1]])
+            coverage = float(scrmsd_scorer.coverage_matrix[lig_pair[0], lig_pair[1]])
+            aux_data = scrmsd_scorer.aux_matrix[lig_pair[0], lig_pair[1]]
+            target_key = out["reference_ligands"][lig_pair[0]]
+            model_key = out["model_ligands"][lig_pair[1]]
+            transform_data = aux_data["transform"].data
+            out["rmsd"]["assigned_scores"].append({"score": score,
+                                                   "coverage": coverage,
+                                                   "lddt_lp": aux_data["lddt_lp"],
+                                                   "bb_rmsd": aux_data["bb_rmsd"],
+                                                   "model_ligand": model_key,
+                                                   "reference_ligand": target_key,
+                                                   "chain_mapping": aux_data["chain_mapping"],
+                                                   "bs_ref_res": [_QualifiedResidueNotation(r) for r in
+                                                                      aux_data["bs_ref_res"]],
+                                                   "bs_ref_res_mapped": [_QualifiedResidueNotation(r) for r in
+                                                                         aux_data["bs_ref_res_mapped"]],
+                                                   "bs_mdl_res_mapped": [_QualifiedResidueNotation(r) for r in
+                                                                         aux_data["bs_mdl_res_mapped"]],
+                                                   "inconsistent_residues": [_QualifiedResidueNotation(r[0]) + \
+                                                                             "-" +_QualifiedResidueNotation(r[1]) for r in
+                                                                             aux_data["inconsistent_residues"]],
+                                                   "transform": [transform_data[i:i + 4]
+                                                                 for i in range(0, len(transform_data), 4)]})
+
+        out["rmsd"]["model_ligand_unassigned_reason"] = dict()
+        for i in scrmsd_scorer.unassigned_model_ligands:
+            key = out["model_ligands"][i]
+            reason = scrmsd_scorer.guess_model_ligand_unassigned_reason(i)
+            out["rmsd"]["model_ligand_unassigned_reason"][key] = reason
+
+        out["rmsd"]["reference_ligand_unassigned_reason"] = dict()
+        for i in scrmsd_scorer.unassigned_target_ligands:
+            key = out["reference_ligands"][i]
+            reason = scrmsd_scorer.guess_target_ligand_unassigned_reason(i)
+            out["rmsd"]["reference_ligand_unassigned_reason"][key] = reason
+
+        if args.full_results:
+            out["rmsd"]["full_results"] = list()
+            shape = scrmsd_scorer.score_matrix.shape
+            for ref_lig_idx in range(shape[0]):
+                for mdl_lig_idx in range(shape[1]):
+                    state = int(scrmsd_scorer.state_matrix[(ref_lig_idx, mdl_lig_idx)])
+                    target_key = out["reference_ligands"][ref_lig_idx]
+                    model_key = out["model_ligands"][mdl_lig_idx]
+                    if state == 0:                    
+                        score = float(scrmsd_scorer.score_matrix[(ref_lig_idx, mdl_lig_idx)])
+                        coverage = float(scrmsd_scorer.coverage_matrix[(ref_lig_idx, mdl_lig_idx)])
+                        aux_data = scrmsd_scorer.aux_matrix[(ref_lig_idx, mdl_lig_idx)]
+                        transform_data = aux_data["transform"].data
+                        out["rmsd"]["full_results"].append({"score": score,
+                                                            "coverage": coverage,
+                                                            "lddt_lp": aux_data["lddt_lp"],
+                                                            "bb_rmsd": aux_data["bb_rmsd"],
+                                                            "model_ligand": model_key,
+                                                            "reference_ligand": target_key,
+                                                            "chain_mapping": aux_data["chain_mapping"],
+                                                            "bs_ref_res": [_QualifiedResidueNotation(r) for r in
+                                                                               aux_data["bs_ref_res"]],
+                                                            "bs_ref_res_mapped": [_QualifiedResidueNotation(r) for r in
+                                                                                  aux_data["bs_ref_res_mapped"]],
+                                                            "bs_mdl_res_mapped": [_QualifiedResidueNotation(r) for r in
+                                                                                  aux_data["bs_mdl_res_mapped"]],
+                                                            "inconsistent_residues": [_QualifiedResidueNotation(r[0]) + \
+                                                                             "-" +_QualifiedResidueNotation(r[1]) for r in
+                                                                                      aux_data["inconsistent_residues"]],
+                                                            "transform": [transform_data[i:i + 4]
+                                                                          for i in range(0, len(transform_data), 4)]})
+
+                    else:
+                        reason = scrmsd_scorer.state_decoding[state]
+                        out["rmsd"]["full_results"].append({"score": None,
+                                                            "coverage": None,
+                                                            "model_ligand": model_key,
+                                                            "reference_ligand": target_key,
+                                                            "reason": reason})
+
+    # add info relevant for chain mapping and cleanup
+    out["chem_groups"] = scorer._chain_mapper.chem_groups
+    out["chem_mapping"] = scorer._chem_mapping
+    out["mdl_chains_without_chem_mapping"] = scorer._mdl_chains_without_chem_mapping
+    out["model_cleanup_log"] = scorer.model_cleanup_log
+    out["reference_cleanup_log"] = scorer.target_cleanup_log
+
+    return out
+
+def _WriteCSV(out, args):
+    csv_dict = {}
+
+    if args.output_by_model_ligand:
+        ligand_by = "model_ligand"
+        ligand_other = "reference_ligand"
+    else:
+        ligand_by = "reference_ligand"
+        ligand_other = "model_ligand"
+
+    # Always fill-in basic reference ligand info
+    fieldnames = [ligand_by]
+    for ligand in out["%ss" % ligand_by]:
+        csv_dict[ligand] = {
+            ligand_by: ligand,
+        }
+
+    if args.lddt_pli:
+        fieldnames.extend(["lddt_pli",  "lddt_pli_coverage",
+                           "lddt_pli_%s" % ligand_other, "lddt_pli_unassigned"])
+        for score in out["lddt_pli"]["assigned_scores"]:
+            csv_dict[score[ligand_by]].update({
+                ligand_by: score[ligand_by],
+                "lddt_pli": score["score"],
+                "lddt_pli_coverage": score["coverage"],
+                "lddt_pli_%s" % ligand_other: score[ligand_other],
+            })
+        for ligand, reason in out["lddt_pli"][
+                "%s_unassigned_reason" % ligand_by].items():
+            csv_dict[ligand].update({
+                ligand_by: ligand,
+                "lddt_pli_unassigned": reason[0],
+            })
+
+    if args.rmsd:
+        fieldnames.extend(["rmsd", "lddt_lp", "bb_rmsd", "rmsd_coverage",
+                           "rmsd_%s" % ligand_other, "rmsd_unassigned"])
+        for score in out["rmsd"]["assigned_scores"]:
+            csv_dict[score[ligand_by]].update({
+                ligand_by: score[ligand_by],
+                "rmsd": score["score"],
+                "lddt_lp": score["lddt_lp"],
+                "bb_rmsd": score["bb_rmsd"],
+                "rmsd_coverage": score["coverage"],
+                "rmsd_%s" % ligand_other: score[ligand_other],
+            })
+        for ligand, reason in out["rmsd"][
+                "%s_unassigned_reason" % ligand_by].items():
+            csv_dict[ligand].update({
+                ligand_by: ligand,
+                "rmsd_unassigned": reason[0],
+            })
+
+    if args.csv_extra_header or args.csv_extra_data:
+
+        extra_csv = StringIO(
+            args.csv_extra_header + os.linesep + args.csv_extra_data)
+        reader = csv.DictReader(extra_csv)
+        extra_data = next(iter(reader))
+        if None in extra_data:
+            raise ValueError("Not enough columns in --csv-extra-header")
+        fieldnames = reader.fieldnames + fieldnames
+        for ligand, row in csv_dict.items():
+            row.update(extra_data)
+
+    with open(args.output, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in csv_dict.values():
+            writer.writerow(row)
+
+def _Main():
+
+    args = _ParseArgs()
+
+    # Setup logging
+    action_logger = _LogSink()
+    ost.PushLogSink(action_logger)
+    ost.PushVerbosityLevel(args.verbosity)
+    if args.verbosity < 4:
+        # Hide tracebacks by default
+        # Run script with -v 4 (Verbose) or higher to display them
+        sys.tracebacklimit = 0
+    
+    _CheckCompoundLib()
+    try:
+        # Load structures
+        LogScript("Loading data")
+        LogInfo("Loading reference data")
+        reference, reference_ligands, seqres, trg_seqres_mapping = \
+        _LoadStructureData(args.reference,
+                           args.reference_ligands,
+                           sformat = args.reference_format,
+                           bu_id = args.reference_biounit,
+                           fault_tolerant = args.fault_tolerant)
+
+        LogInfo("Loading model data")
+        model, model_ligands, _, _ = _LoadStructureData(args.model,
+                                                        args.model_ligands,
+                                                        sformat = args.model_format,
+                                                        bu_id = args.model_biounit,
+                                                        fault_tolerant = args.fault_tolerant)
+
+        out = _Process(model, model_ligands, reference, reference_ligands, args,
+                       seqres = seqres, trg_seqres_mapping = trg_seqres_mapping)
+
+        # append input arguments
+        out["arguments"] = args.__dict__
+        if args.trg_seqres_mapping:
+            tmp = {x.split(':')[0]: x.split(':')[1] for x in args.trg_seqres_mapping}
+            out_args["trg_seqres_mapping"] = tmp
+        
+        # Save log messages
+        out["log"] = action_logger.messages
+
+        # finalize
+        out["ost_version"] = ost.__version__
+        out["status"] = "SUCCESS"
+        if args.output_format == "json":
+            with open(args.output, 'w') as fh:
+                json.dump(out, fh, indent=4, sort_keys=False)
+        else:
+            _WriteCSV(out, args)
+        LogScript("Saved results in %s" % args.output)
+
+    except Exception as exc:
+        if args.output_format == "json":
+            out = dict()
+            out["status"] = "FAILURE"
+            out["traceback"] = traceback.format_exc(limit=1000)
+            etype, evalue, tb = sys.exc_info()
+            out["exception"] = " ".join(traceback.format_exception_only(etype, evalue))
+            with open(args.output, 'w') as fh:
+                json.dump(out, fh, indent=4, sort_keys=False)
+            LogWarning("Error information saved in %s" % args.output)
+        else:
+            LogScript("Error encountered, no output saved")
+        raise
+
+
+if __name__ == '__main__':
+    _Main()
