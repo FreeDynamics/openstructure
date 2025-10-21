@@ -80,3 +80,4 @@ modules/mol/mm/tests/test.ff
 build/
 output/
 rattler-build*.log
+upload_packages.sh
